@@ -153,7 +153,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         SelectObject(dc, penRed);
         Rectangle(dc, panelX - 2, panelY - 2, panelX + panelW + 2, panelY + panelH + 2);
 
-        // 4. Логотип "ОТДЕЛ К" (Красный череп/щит)
+        // 4. Логотип "ОТДЕЛ К"
         int logoX = panelX + 30;
         int logoY = panelY + 30;
         RECT rcShield = {logoX, logoY, logoX + 120, logoY + 120};
@@ -206,7 +206,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         DeleteObject(blackIn);
         FrameRect(dc, &rcInput, (HBRUSH)GetStockObject(WHITE_BRUSH));
         
-        // Введенный текст (Красный, как кровь)
+        // Введенный текст (Красный)
         SetTextColor(dc, RGB(255, 0, 0));
         RECT rcInputText = rcInput; rcInputText.left += 10;
         DrawTextW(dc, g_input.c_str(), -1, &rcInputText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -221,12 +221,15 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             DeleteObject(curBrush);
         }
 
-        // 8. Кнопка "Разблокировать"
+        // 8. Кнопка "ENTER" (Исправлено: создаем красную кисть вручную)
         RECT rcBtn = {panelX + 420, inputY, panelX + 550, inputY + 35};
         HBRUSH btnBg = CreateSolidBrush(RGB(50, 0, 0));
         FillRect(dc, &rcBtn, btnBg);
         DeleteObject(btnBg);
-        FrameRect(dc, &rcBtn, (HBRUSH)GetStockObject(RED_BRUSH));
+        
+        HBRUSH redFrameBrush = CreateSolidBrush(RGB(255, 0, 0)); // <-- Вот тут фикс
+        FrameRect(dc, &rcBtn, redFrameBrush);
+        DeleteObject(redFrameBrush);
         
         SetTextColor(dc, RGB(255, 255, 255));
         DrawTextW(dc, L"ENTER", -1, &rcBtn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -253,7 +256,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         return 0;
     }
     case WM_CHAR: {
-        // Принимаем только цифры, Backspace и Enter
         if (w == VK_BACK && !g_input.empty()) {
             g_input.pop_back();
         } else if (w >= '0' && w <= '9' && g_input.length() < 10) {
@@ -291,7 +293,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     wc.lpszClassName = L"LockerWnd";
     RegisterClassW(&wc);
 
-    CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"LockerWnd", L"System", WS_EX_TOPMOST, 
+    CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"LockerWnd", L"System", WS_POPUP, 
         0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, hInst, nullptr);
 
     MSG msg;
