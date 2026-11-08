@@ -8,7 +8,7 @@ jobs:
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
       - name: Compile
-        run: cl /std:c++17 /EHsc /O2 /MT locker.cpp user32.lib gdi32.lib advapi32.lib shell32.lib bcrypt.lib
+        run: cl /utf-8 /std:c++17 /EHsc /O2 /MT locker.cpp user32.lib gdi32.lib advapi32.lib shell32.lib bcrypt.lib
       - uses: actions/upload-artifact@v4
         with:
           name: locker
